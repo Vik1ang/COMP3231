@@ -48,6 +48,10 @@
  *
  */
 
+/*
+ * create a new empty addrspace 
+ * Return NULL on out of memory error 
+ */ 
 struct addrspace *
 as_create(void)
 {
@@ -61,10 +65,15 @@ as_create(void)
 	/*
 	 * Initialize as needed.
 	 */
+    as->Region = NULL;
 
 	return as;
 }
 
+/*
+ * create a new address space that is an exact copy of an old one.
+ * 
+ */
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
@@ -78,12 +87,30 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 	/*
 	 * Write this.
 	 */
+    
+    // copy region 
+    struct region *OldRegion;
+    OldRegion = old->Region;
 
-	(void)old;
+    // copy to new address space 
+    while(OldRegion != NULL){
+        struct region *NewRegion = kmalloc(sizeof(struct Region));
+        NewRegion->Addr = OldRegion->Addr;
+        NewRegion->FileSize = OldRegion->FileSize;
+        NewRegion->Perm = OldRegion->Perm;
+        NewRegion->PrePerm = OldRegion->PrePerm;
+        
+        newas->Region = NewRegion;
+        OldRegion = OldRegion->next;
+    }
+
+	/** (void)old; */
 
 	*ret = newas;
 	return 0;
 }
+
+// free all region 
 
 void
 as_destroy(struct addrspace *as)
@@ -91,7 +118,19 @@ as_destroy(struct addrspace *as)
 	/*
 	 * Clean up as needed.
 	 */
+    if(as == NULL)
+        return NULL;
 
+    struct region *reg = as->Region;
+    while(reg != NULL){
+        struct region *tmp;
+        tmp = reg;
+        kfree(tmp);
+        
+        reg = reg->next;
+    }
+
+    
 	kfree(as);
 }
 
@@ -112,6 +151,23 @@ as_activate(void)
 	/*
 	 * Write this.
 	 */
+
+    // get idea from spl.h and dumbvm.c
+     
+    // sets IPL to the highest value, disabling all interrupts.
+    int spl = splhigh();
+    // flush TLB
+    /*
+     * code
+     */ 
+    for(int i = 0;i < NUM_TLB ;i++){
+        //write the TLB entry specified by ENTRYHI and ENTRYLO
+        //into TLB slot chosen by the processor.
+		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+        
+    }
+    splx(s);
+
 }
 
 void
@@ -122,6 +178,7 @@ as_deactivate(void)
 	 * anything. See proc.c for an explanation of why it (might)
 	 * be needed.
 	 */
+	
 }
 
 /*
@@ -141,24 +198,61 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	/*
 	 * Write this.
 	 */
-
-	(void)as;
-	(void)vaddr;
-	(void)memsize;
-	(void)readable;
-	(void)writeable;
-	(void)executable;
-	return ENOSYS; /* Unimplemented */
+	if (as == NULL) return EFAULT;
+	// idea from dumbvm.c
+	// not very sure
+	memsize += vaddr & ~(vaddr_t)PAGE_FRAME;
+	vaddr &= PAGE_FRAME;
+	
+	// current length
+	memsize += (memsize + PAGE_SIZE - 1) & PAGE_FRAME;
+	
+	// new region
+	struct region *NewRg = kmalloc(sizeof(struct region));
+	if(NewRg == NULL) return EFAULT;
+	NewRg->Addr = vaddr;
+	NewRg->Filesize = memsize;
+	NewRg->readable = readable;
+	NewRg->writeable = writeable;
+	NewRg->executable = executable;
+	
+	// now add to the end of region list
+	struct region *tmp;
+	tmp = as->region;
+	// make sure as->region is the last one in the list
+	while(tmp->next != NULL){
+		tmp = tmp->next;
+	}
+	tmp->next = NewRg;
+	
+	// (void)as;
+	// (void)vaddr;
+	// (void)memsize;
+	// (void)readable;
+	// (void)writeable;
+	// (void)executable;
+	// return ENOSYS; /* Unimplemented */
+	return 0;
 }
 
+// this is called before actually loading from an executable into the address space.
 int
 as_prepare_load(struct addrspace *as)
 {
 	/*
 	 * Write this.
 	 */
+	if(as == NULL) return EFAULT;
+	struct region *CurrReg;
+	CurrReg = as->region;
+	
+	// change all to writeable
+	while(CurrReg != NULL){
+		CurrReg->writeable = true;
+		CurrReg = CurrReg->next;
+	}
 
-	(void)as;
+	// (void)as;
 	return 0;
 }
 
@@ -168,19 +262,42 @@ as_complete_load(struct addrspace *as)
 	/*
 	 * Write this.
 	 */
+	// similar like as_prepare_load
+	// set all to cannot writeable
+	if(as == NULL) return EFAULT;
+	struct region *CurrReg;
+	
+	// change to !writeable
+	while(CurrReg != NULL){
+		CurrReg->writeable = false;
+		CurrReg = CurrReg->next;
+	}
+	
 
-	(void)as;
+	// (void)as;
 	return 0;
 }
 
+/*
+ * set up the stack region in the address space.
+ * Hands back the initial stack pointer for the new process.
+ */
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
 	/*
 	 * Write this.
 	 */
-
-	(void)as;
+	if(as == NULL) return EFAULT;
+	
+	// using the as_define_region to set up the stack region
+	size_t size = USER_STACKPAGES * PAGE_SIZE;	// stakcsize
+	vaddr_t vaddr = USERSTACK - size;			// virtual address
+	// not sure the permission on the stack 
+	// set permission to 1
+	as_define_region(as, vaddr, size, true, true, true);
+	
+	// (void)as;
 
 	/* Initial user-level stack pointer */
 	*stackptr = USERSTACK;
