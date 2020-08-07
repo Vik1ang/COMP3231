@@ -35,11 +35,28 @@
  */
 
 
+
 #include <vm.h>
 #include "opt-dumbvm.h"
 
 struct vnode;
 
+/*
+ * a fixed-size region (say 16 pages) for each process
+ *
+ */
+// update after looking dumbvm.c
+struct region{
+    vaddr_t Addr;               // base address
+    size_t FileSize;            // filesize
+    // int Perm;                   // current permission
+    // int PrePerm;                // previous permission
+	int readable;				// 
+	int writeable;				// 
+	int executable				//
+    struct region *Next; // the next region
+
+}
 
 /*
  * Address space - data structure associated with the virtual memory
@@ -59,6 +76,8 @@ struct addrspace {
         paddr_t as_stackpbase;
 #else
         /* Put stuff here for your VM system */
+        paddr_t **PageTable;
+        struct region *Region;
 #endif
 };
 
@@ -81,7 +100,7 @@ struct addrspace {
  *    as_deactivate - unload curproc's address space so it isn't
  *                currently "seen" by the processor. This is used to
  *                avoid potentially "seeing" it while it's being
- *                destroyed.
+ *      destroyed.
  *
  *    as_destroy - dispose of an address space. You may need to change
  *                the way this works if implementing user-level threads.
