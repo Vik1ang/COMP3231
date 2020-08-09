@@ -39,6 +39,9 @@
 #include <vm.h>
 #include "opt-dumbvm.h"
 
+// the number of userstackpages
+#define USER_STACKPAGES 16
+
 struct vnode;
 
 /*
@@ -53,10 +56,15 @@ struct region{
     // int PrePerm;                // previous permission
 	int readable;				// 
 	int writeable;				// 
-	int executable				//
-    struct region *Next; // the next region
+	int executable;				//
+    // When Dirty bit is 1, it means this page is writable,
+    // otherwise, it's read-only. 
+    // When Valid bit is 1, 
+    // it means this TLB entry contains a valid translation.
+    int dirty;
+    struct region *next; // the next region
 
-}
+};
 
 /*
  * Address space - data structure associated with the virtual memory
@@ -76,8 +84,8 @@ struct addrspace {
         paddr_t as_stackpbase;
 #else
         /* Put stuff here for your VM system */
-        paddr_t **PageTable;
-        struct region *Region;
+        paddr_t **pagetable;
+        struct region *region;
 #endif
 };
 
