@@ -94,8 +94,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
     // look up pagetable
     // first lookup there is valid translation
-    if(as->pagetable[LV1_PT_Index] != NULL){
-        if(as->pagetable[LV1_PT_Index][LV2_PT_Index] != 0){
+    if((as->pagetable[LV1_PT_Index] != NULL) && (as->pagetable[LV1_PT_Index][LV2_PT_Index] != 0)){
             // if valid translation load tlb
             int spl; 
             // disable interrupts
@@ -105,21 +104,24 @@ vm_fault(int faulttype, vaddr_t faultaddress)
             tlb_random(Entry_HI, Entry_LO);
             splx(spl);
             return 0;
-        }
     } 
 	
 	// invalid translation
 	// look up region
-	// if invalid 
 	struct region *region = as->region;
+    // search region
     while (region != NULL)
     {
-        if (faultaddress >= region->addrs && (faultaddress - region->addrs) < region->size) {
+        // it will failed the crash test if dont have this one!!!!!
+        // fault address must >= region address and <= region->size + region->addrs
+        if(faultaddress >= region->addrs && faultaddress <= region->size * PAGE_SIZE + region->addrs){
+            // if find the valid region break
             break;
         }
         region = region->next;
     }
-    
+
+    // if invalid
 	if(region == NULL)
 		return EFAULT;
 	
@@ -149,8 +151,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 
 	
     // Load tlb
-    Entry_HI = (faultaddress & PAGE_FRAME) & TLBHI_VPAGE;
-	Entry_LO = as->pagetable[LV1_PT_Index][LV2_PT_Index];
+    Entry_HI = (uint32_t)(faultaddress & PAGE_FRAME) & TLBHI_VPAGE;
+	Entry_LO = (uint32_t)as->pagetable[LV1_PT_Index][LV2_PT_Index];
 	int spl;
     // disable interrupts
 	spl = splhigh();
