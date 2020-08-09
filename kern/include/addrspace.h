@@ -68,7 +68,7 @@ struct addrspace {
 #else
         /* Put stuff here for your VM system */
         struct region *region;
-        paddr_t **pagetable;
+        paddr_t **pagetable;    // pagetable
 
 #endif
 };
