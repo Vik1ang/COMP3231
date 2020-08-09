@@ -365,7 +365,7 @@ as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 	
 	// using the as_define_region to set up the stack region
 	// size_t size = USER_STACKPAGES * PAGE_SIZE;	// stakcsize
-	size_t size = PAGE_SIZE;
+	size_t size = 16 * PAGE_SIZE;
 	vaddr_t vaddr = USERSTACK - size;			// virtual address
 	// not sure the permission on the stack 
 	// set all permission to 1
