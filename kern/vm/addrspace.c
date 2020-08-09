@@ -57,131 +57,166 @@ as_create(void)
 {
 	struct addrspace *as;
 
-		as = kmalloc(sizeof(struct addrspace));
-		if (as == NULL) {
-			return NULL;
-		}
+	as = kmalloc(sizeof(struct addrspace));
+	if (as == NULL) {
+		return NULL;
+	}
 
-		/*
-		 * Initialize as needed.
-		 */
-	    as->region = NULL;
-		// allocate and initialize page table 
-		as->pagetable = (paddr_t **)alloc_kpages(1);
-		for(int i = 0; i < PAGE_SIZE; i++){
-			as->pagetable[i] = NULL;
-		}
-		// emmmmmmmmmm， it wassssss wrong
-		// memset(as->pagetable, NULL, PAGE_SIZE);
+	/*
+	 * Initialize as needed.
+	 */
+    as->region = NULL;
+	// allocate and initialize page table 
+	as->pagetable = (paddr_t **)alloc_kpages(1);
+	for(int i = 0; i < PAGE_SIZE; i++){
+		as->pagetable[i] = NULL;
+	}
+	// emmmmmmmmmm, it was wrong
+	// memset(as->pagetable, NULL, PAGE_SIZE);
 
-		return as;
+	return as;
 }
 
 /*
- * create a new address space that is an exact copy of an old one.
+ * allocate a new address space
+ * add all the same region as source
+ * for each paged in souce
+ * 	* allocate a frame in dest
+ * 	* copy contents from source frame to dest frame
+ *  * add PT entry for dest
  * 
+ */
+
+
+// TODO:get struggle on here 
+/*
+ * copy contents 
+ * and
+ * copy page table (allocate a new one)
  */
 int
 as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	struct addrspace *newas;
 
-		newas = as_create();
-		if(newas == NULL){
-			return ENOMEM;
-		}
+	newas = as_create();
+	if(newas == NULL){
+		return ENOMEM;
+	}
 
+	/**
+	 * Write this
+	 */ 
 	// old region
-		struct region *OldRegion = old->region;
-		// new region
-		struct region *NewRegion = NULL;
-		// copy in new region
-		while (OldRegion != NULL)
-		{
-			// it was wrong with below but cannot figure out where i get wrong
+	struct region *OldRegion = old->region;
+	// new region
+	struct region *NewRegion = NULL;
+	// copy in new region
 
-			struct region *tempRegion = kmalloc(sizeof(struct region));
+	// copy contents
+	while (OldRegion != NULL)
+	{
+		// it was wrong with below but cannot figure out where i get wrong
 
-			tempRegion->addrs = OldRegion->addrs;
-			tempRegion->size = OldRegion->size;
-			tempRegion->readable = OldRegion->readable;
-			tempRegion->writeable = OldRegion->writeable;
-			tempRegion->executable = OldRegion->executable;
-			tempRegion->next = NULL;
+		struct region *tempRegion = kmalloc(sizeof(struct region));
 
-			if(NewRegion == NULL){
-				// 
-				newas->region = tempRegion;
-				NewRegion = tempRegion;
-				OldRegion = OldRegion->next;
-				continue;
-			
-			}
-			NewRegion->next = tempRegion;
+		tempRegion->addrs = OldRegion->addrs;
+		tempRegion->size = OldRegion->size;
+		tempRegion->readable = OldRegion->readable;
+		tempRegion->writeable = OldRegion->writeable;
+		tempRegion->executable = OldRegion->executable;
+		// DO NOT FORGET THIS
+		// IT TAKES ME A LOT TIME
+		// !!!!!!!!!!!!!!!!!!!
+		tempRegion->next = NULL;
+
+		if(NewRegion == NULL){
+			// maybe there is another better solution
+			// i try a lot and finally solve the bad memory problem
+			newas->region = tempRegion;
 			NewRegion = tempRegion;
 			OldRegion = OldRegion->next;
-		
+			continue;
+			
 		}
+		NewRegion->next = tempRegion;
+		NewRegion = tempRegion;
+		OldRegion = OldRegion->next;
+		
+	}
 
-		for(int i = 0; i < 1024; i++){
-			if(old->pagetable[i] == NULL){
+	// copy page table
+	// allocate a two-level radix tree whose lower tier is made up of blocks of size PAGE_SIZE/4
+	// PAGE_SIZE is commonly 4096, each of these blocks holds 1024 pointers (on a 32-bit machine
+	// each blocks 1024
+	for(int i = 0; i < 1024; i++){
+		if(old->pagetable[i] == NULL){
+			continue;
+		}
+		// allocate page table, each page size is 4096
+		newas->pagetable[i] = kmalloc(PAGE_SIZE);
+		// second page table
+		// each page bloack is 1024
+		for(int j = 0; j < 1024; j++){
+			// if old entry is 0, make new entry 0
+			if(old->pagetable[i][j] == 0){
+				newas->pagetable[i][j] = 0;
 				continue;
 			}
-			// allocate page table
-			newas->pagetable[i] = kmalloc(PAGE_SIZE);
-			// second page table
-			for(int j = 0; j < 1024; j++){
-				// if old entry is 0, make new entry 0
-				if(old->pagetable[i][j] == 0){
-					newas->pagetable[i][j] = 0;
-					continue;
-				}
-				// follow by asst3.pdf but feel wired about it
-				// allocate a new frame in dest
-				vaddr_t NewFrame = alloc_kpages(1);
-				// zero the block
-				// bzero((void *)NewFrame, PAGE_SIZE);
-				// like dumbvm.c using memove to copy a block of memory, handling overlapping
-				vaddr_t dest = PADDR_TO_KVADDR(old->pagetable[i][j] & PAGE_FRAME);
-				// using kernel address => using vaddr_t 
-				memmove((void *) NewFrame, (const void*)dest, PAGE_SIZE);
-				paddr_t NewAddr = KVADDR_TO_PADDR(NewFrame) & PAGE_FRAME;
-				// newas->pagetable[i][j] = NewAddr | TLBLO_VALID | dirty;
-				newas->pagetable[i][j] = NewAddr | TLBLO_VALID | TLBLO_DIRTY;
+			// follow by asst3.pdf but still feel wired about it
+			// allocate a new frame in dest
+			vaddr_t NewFrame = alloc_kpages(1);
+			// not zero the block is also right FEEL WIRED!!!
+			// zero the block
+			// bzero((void *)NewFrame, PAGE_SIZE)
+			
+			// Change kernel virtual address to physical to store
+			
+			// DONOT forget & PAGE_FRAME
+			// using bit operation can get the address
+			vaddr_t dest = PADDR_TO_KVADDR(old->pagetable[i][j] & PAGE_FRAME);
+			// using kernel address => using vaddr_t 
+			// like dumbvm.c using memove to copy a block of memory, handling overlapping
+			memmove((void *) NewFrame, (const void*)dest, PAGE_SIZE);
+			paddr_t NewAddr = KVADDR_TO_PADDR(NewFrame) & PAGE_FRAME;
+			// looking for internet for a long while 
+			// thanks tutorial pdf, it helps me to solve this
+			newas->pagetable[i][j] = NewAddr | TLBLO_VALID | TLBLO_DIRTY;
 
-			}
-		
 		}
+		
+	}
 
-		*ret = newas;
-		return 0;
+	*ret = newas;
+	return 0;
 }
 
 // free all region 
-// TODO: free pagetable
+
 void
 as_destroy(struct addrspace *as)
 {
 	/*
 	 * Clean up as needed.
 	 */
+
+	// free region
 	if(as == NULL) return;
 
-		struct region *ToFree = NULL;
-		struct region *region = as->region;
-		while (region != NULL)
-		{
-			ToFree = region;
-			region = region->next;
-			kfree(ToFree);
+	struct region *ToFree = NULL;
+	struct region *region = as->region;
+	while (region != NULL)
+	{
+		ToFree = region;
+		region = region->next;
+		kfree(ToFree);
 		
-		}
+	}
 	
 
-		// free pagetable
+	// free pagetable
 
-		kfree(as);
-	}
+	kfree(as);
 }
 
 void
@@ -287,27 +322,24 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 
 	region->addrs = vaddr;
 	region->size = memsize;
-	region->dirty = writeable;
-	// region->readable = readable;
-	// region->writeable = writeable;
-	// region->executable = executable;
+	region->readable = readable;
+	region->writeable = writeable;
+	region->executable = executable;
 
 	// add region to addrspace
-	(void) readable;
-	(void) executable;
-	region->next = as->region;
+	region->next = as->region; 
 	as->region = region;
 	return 0;
+
 }
 
 // this is called before actually loading from an executable into the address space.
+// as_prepare_load() enable writing to the code segment while the OS loads the code associated with the process
+
 int
 as_prepare_load(struct addrspace *as)
 {
 	/*
-	 * Write this.
-	 */
-/*
 	 * Write this.
 	 */
 	// make everything write
@@ -324,7 +356,7 @@ as_prepare_load(struct addrspace *as)
 	return 0;
 }
 
-// TODO: need fix
+// as_complete_load() then removes write permission to the code segment to revert it back to read-only.
 int
 as_complete_load(struct addrspace *as)
 {
@@ -358,17 +390,16 @@ as_complete_load(struct addrspace *as)
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-/*
+	/*
 	 * Write this.
 	 */
 	if(as == NULL) return EFAULT;
 	
 	// using the as_define_region to set up the stack region
-	// size_t size = USER_STACKPAGES * PAGE_SIZE;	// stakcsize
 	size_t size = 16 * PAGE_SIZE;
 	vaddr_t vaddr = USERSTACK - size;			// virtual address
 	// not sure the permission on the stack 
-	// set all permission to 1
+	// so set all permission to 1
 	as_define_region(as, vaddr, size, true, true, true);
 	
 	// (void)as;
