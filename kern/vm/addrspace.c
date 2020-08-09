@@ -57,17 +57,24 @@ as_create(void)
 {
 	struct addrspace *as;
 
-	as = kmalloc(sizeof(struct addrspace));
-	if (as == NULL) {
-		return NULL;
-	}
+		as = kmalloc(sizeof(struct addrspace));
+		if (as == NULL) {
+			return NULL;
+		}
 
-	/*
-	 * Initialize as needed.
-	 */
-    as->Region = NULL;
+		/*
+		 * Initialize as needed.
+		 */
+	    as->region = NULL;
+		// allocate and initialize page table 
+		as->pagetable = (paddr_t **)alloc_kpages(1);
+		for(int i = 0; i < PAGE_SIZE; i++){
+			as->pagetable[i] = NULL;
+		}
+		// emmmmmmmmmm， it wassssss wrong
+		// memset(as->pagetable, NULL, PAGE_SIZE);
 
-	return as;
+		return as;
 }
 
 /*
@@ -79,59 +86,102 @@ as_copy(struct addrspace *old, struct addrspace **ret)
 {
 	struct addrspace *newas;
 
-	newas = as_create();
-	if (newas==NULL) {
-		return ENOMEM;
-	}
+		newas = as_create();
+		if(newas == NULL){
+			return ENOMEM;
+		}
 
-	/*
-	 * Write this.
-	 */
-    
-    // copy region 
-    struct region *OldRegion;
-    OldRegion = old->Region;
+	// old region
+		struct region *OldRegion = old->region;
+		// new region
+		struct region *NewRegion = NULL;
+		// copy in new region
+		while (OldRegion != NULL)
+		{
+			// it was wrong with below but cannot figure out where i get wrong
 
-    // copy to new address space 
-    while(OldRegion != NULL){
-        struct region *NewRegion = kmalloc(sizeof(struct Region));
-        NewRegion->Addr = OldRegion->Addr;
-        NewRegion->FileSize = OldRegion->FileSize;
-        NewRegion->Perm = OldRegion->Perm;
-        NewRegion->PrePerm = OldRegion->PrePerm;
-        
-        newas->Region = NewRegion;
-        OldRegion = OldRegion->next;
-    }
+			struct region *tempRegion = kmalloc(sizeof(struct region));
 
-	/** (void)old; */
+			tempRegion->addrs = OldRegion->addrs;
+			tempRegion->size = OldRegion->size;
+			tempRegion->readable = OldRegion->readable;
+			tempRegion->writeable = OldRegion->writeable;
+			tempRegion->executable = OldRegion->executable;
+			tempRegion->next = NULL;
 
-	*ret = newas;
-	return 0;
+			if(NewRegion == NULL){
+				// 
+				newas->region = tempRegion;
+				NewRegion = tempRegion;
+				OldRegion = OldRegion->next;
+				continue;
+			
+			}
+			NewRegion->next = tempRegion;
+			NewRegion = tempRegion;
+			OldRegion = OldRegion->next;
+		
+		}
+
+		for(int i = 0; i < 1024; i++){
+			if(old->pagetable[i] == NULL){
+				continue;
+			}
+			// allocate page table
+			newas->pagetable[i] = kmalloc(PAGE_SIZE);
+			// second page table
+			for(int j = 0; j < 1024; j++){
+				// if old entry is 0, make new entry 0
+				if(old->pagetable[i][j] == 0){
+					newas->pagetable[i][j] = 0;
+					continue;
+				}
+				// follow by asst3.pdf but feel wired about it
+				// allocate a new frame in dest
+				vaddr_t NewFrame = alloc_kpages(1);
+				// zero the block
+				// bzero((void *)NewFrame, PAGE_SIZE);
+				// like dumbvm.c using memove to copy a block of memory, handling overlapping
+				vaddr_t dest = PADDR_TO_KVADDR(old->pagetable[i][j] & PAGE_FRAME);
+				// using kernel address => using vaddr_t 
+				memmove((void *) NewFrame, (const void*)dest, PAGE_SIZE);
+				paddr_t NewAddr = KVADDR_TO_PADDR(NewFrame) & PAGE_FRAME;
+				// newas->pagetable[i][j] = NewAddr | TLBLO_VALID | dirty;
+				newas->pagetable[i][j] = NewAddr | TLBLO_VALID | TLBLO_DIRTY;
+
+			}
+		
+		}
+
+		*ret = newas;
+		return 0;
 }
 
 // free all region 
-
+// TODO: free pagetable
 void
 as_destroy(struct addrspace *as)
 {
 	/*
 	 * Clean up as needed.
 	 */
-    if(as == NULL)
-        return NULL;
+	if(as == NULL) return;
 
-    struct region *reg = as->Region;
-    while(reg != NULL){
-        struct region *tmp;
-        tmp = reg;
-        kfree(tmp);
-        
-        reg = reg->next;
-    }
+		struct region *ToFree = NULL;
+		struct region *region = as->region;
+		while (region != NULL)
+		{
+			ToFree = region;
+			region = region->next;
+			kfree(ToFree);
+		
+		}
+	
 
-    
-	kfree(as);
+		// free pagetable
+
+		kfree(as);
+	}
 }
 
 void
@@ -157,16 +207,13 @@ as_activate(void)
     // sets IPL to the highest value, disabling all interrupts.
     int spl = splhigh();
     // flush TLB
-    /*
-     * code
-     */ 
     for(int i = 0;i < NUM_TLB ;i++){
         //write the TLB entry specified by ENTRYHI and ENTRYLO
         //into TLB slot chosen by the processor.
 		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
         
     }
-    splx(s);
+    splx(spl);
 
 }
 
@@ -178,6 +225,35 @@ as_deactivate(void)
 	 * anything. See proc.c for an explanation of why it (might)
 	 * be needed.
 	 */
+
+	// same like as_activate() for disable interrupt
+	struct addrspace *as;
+
+	as = proc_getas();
+	if (as == NULL) {
+		/*
+		 * Kernel thread without an address space; leave the
+		 * prior address space in place.
+		 */
+		return;
+	}
+
+	/*
+	 * Write this.
+	 */
+
+    // get idea from spl.h and dumbvm.c
+     
+    // sets IPL to the highest value, disabling all interrupts.
+    int spl = splhigh();
+    // flush TLB
+    for(int i = 0;i < NUM_TLB ;i++){
+        //write the TLB entry specified by ENTRYHI and ENTRYLO
+        //into TLB slot chosen by the processor.
+		tlb_write(TLBHI_INVALID(i), TLBLO_INVALID(), i);
+        
+    }
+    splx(spl);
 	
 }
 
@@ -198,40 +274,29 @@ as_define_region(struct addrspace *as, vaddr_t vaddr, size_t memsize,
 	/*
 	 * Write this.
 	 */
+	// size_t napges;
 	if (as == NULL) return EFAULT;
 	// idea from dumbvm.c
-	// not very sure
+	// not very sure but it is right
+	// current length
 	memsize += vaddr & ~(vaddr_t)PAGE_FRAME;
 	vaddr &= PAGE_FRAME;
-	
-	// current length
-	memsize += (memsize + PAGE_SIZE - 1) & PAGE_FRAME;
-	
-	// new region
-	struct region *NewRg = kmalloc(sizeof(struct region));
-	if(NewRg == NULL) return EFAULT;
-	NewRg->Addr = vaddr;
-	NewRg->Filesize = memsize;
-	NewRg->readable = readable;
-	NewRg->writeable = writeable;
-	NewRg->executable = executable;
-	
-	// now add to the end of region list
-	struct region *tmp;
-	tmp = as->region;
-	// make sure as->region is the last one in the list
-	while(tmp->next != NULL){
-		tmp = tmp->next;
-	}
-	tmp->next = NewRg;
-	
-	// (void)as;
-	// (void)vaddr;
-	// (void)memsize;
-	// (void)readable;
-	// (void)writeable;
-	// (void)executable;
-	// return ENOSYS; /* Unimplemented */
+
+	struct region *region = kmalloc(sizeof(struct region));
+	KASSERT(region != NULL);
+
+	region->addrs = vaddr;
+	region->size = memsize;
+	region->dirty = writeable;
+	// region->readable = readable;
+	// region->writeable = writeable;
+	// region->executable = executable;
+
+	// add region to addrspace
+	(void) readable;
+	(void) executable;
+	region->next = as->region;
+	as->region = region;
 	return 0;
 }
 
@@ -242,20 +307,24 @@ as_prepare_load(struct addrspace *as)
 	/*
 	 * Write this.
 	 */
-	if(as == NULL) return EFAULT;
-	struct region *CurrReg;
-	CurrReg = as->region;
-	
-	// change all to writeable
-	while(CurrReg != NULL){
-		CurrReg->writeable = true;
-		CurrReg = CurrReg->next;
+/*
+	 * Write this.
+	 */
+	// make everything write
+	struct region *curr = as->region;
+
+	// store current write flag
+	// set write 1
+	while (curr != NULL) {
+		// curr->dirty = curr->writeable;
+		curr->writeable = true;
+		curr = curr->next; 
 	}
 
-	// (void)as;
 	return 0;
 }
 
+// TODO: need fix
 int
 as_complete_load(struct addrspace *as)
 {
@@ -266,10 +335,14 @@ as_complete_load(struct addrspace *as)
 	// set all to cannot writeable
 	if(as == NULL) return EFAULT;
 	struct region *CurrReg;
+	CurrReg = as->region;
 	
 	// change to !writeable
 	while(CurrReg != NULL){
-		CurrReg->writeable = false;
+		// 
+		CurrReg->writeable = 1;
+		CurrReg->readable = 1;
+
 		CurrReg = CurrReg->next;
 	}
 	
@@ -285,16 +358,17 @@ as_complete_load(struct addrspace *as)
 int
 as_define_stack(struct addrspace *as, vaddr_t *stackptr)
 {
-	/*
+/*
 	 * Write this.
 	 */
 	if(as == NULL) return EFAULT;
 	
 	// using the as_define_region to set up the stack region
-	size_t size = USER_STACKPAGES * PAGE_SIZE;	// stakcsize
+	// size_t size = USER_STACKPAGES * PAGE_SIZE;	// stakcsize
+	size_t size = PAGE_SIZE;
 	vaddr_t vaddr = USERSTACK - size;			// virtual address
 	// not sure the permission on the stack 
-	// set permission to 1
+	// set all permission to 1
 	as_define_region(as, vaddr, size, true, true, true);
 	
 	// (void)as;
