@@ -56,7 +56,7 @@ vm_fault(int faulttype, vaddr_t faultaddress)
         default:
             return EINVAL;
     }
-    // get the address
+    // get the address(page section)
     faultaddress &= PAGE_FRAME;
 
     
@@ -79,6 +79,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
      *              return EFAULT 
      * end
      */ 
+
+
     // before we look up the pagetable
     // we need find the each entry and go on
     // level 1 page table index, highest 10 bits (32 - 22 = 10) so shift 22
@@ -98,8 +100,8 @@ vm_fault(int faulttype, vaddr_t faultaddress)
             int spl; 
             // disable interrupts
             spl = splhigh();
-            Entry_HI = (faultaddress & PAGE_FRAME);
-            Entry_LO =  as->pagetable[LV1_PT_Index][LV2_PT_Index];
+            Entry_HI = (uint32_t)(faultaddress & PAGE_FRAME);
+            Entry_LO =  (uint32_t)as->pagetable[LV1_PT_Index][LV2_PT_Index];
             tlb_random(Entry_HI, Entry_LO);
             splx(spl);
             return 0;
@@ -110,30 +112,47 @@ vm_fault(int faulttype, vaddr_t faultaddress)
 	// look up region
 	// if invalid 
 	struct region *region = as->region;
+    while (region != NULL)
+    {
+        if (faultaddress >= region->addrs && (faultaddress - region->addrs) < region->size) {
+            break;
+        }
+        region = region->next;
+    }
+    
 	if(region == NULL)
 		return EFAULT;
 	
 	// else valid region
-	// allocate frame
-	vaddr_t NewFrame = alloc_kpages(1);
-	// bezero
-	bzero((void *)NewFrame, PAGE_SIZE);
-	// insert page table entry
-	if(as->pagetable[LV1_PT_Index] == NULL){
+    // first if dont have entry create a pagetable entry  size is 4096
+    if(as->pagetable[LV1_PT_Index] == NULL){
 		as->pagetable[LV1_PT_Index] = kmalloc(PAGE_SIZE);
+        KASSERT(as->pagetable[LV1_PT_Index] != NULL);
+        // zero the new entry
 		for(int i = 0; i < 1024; i++){
 		as->pagetable[LV1_PT_Index][i] = 0;
 	    }
-    // KASSERT(as->pagetable[LV1_PT_Index] != NULL);
+        
 	}
 	
-	
-	paddr_t New_PAddr = KVADDR_TO_PADDR(NewFrame);
+	// allocate frame
+	vaddr_t NewFrame = alloc_kpages(1);
+	// bezero the frame
+    // if not zero the frame it still works, i am so confused!!!
+    // my think, zero fill is zero the new entry(second page table)
+	// bzero((void *)NewFrame, PAGE_SIZE);
+
+	// insert page table entry
+	paddr_t New_PAddr = KVADDR_TO_PADDR(NewFrame & PAGE_FRAME);
+    // insert!!! thanks tutorial material. It helps me lot!
 	as->pagetable[LV1_PT_Index][LV2_PT_Index] = (New_PAddr & PAGE_FRAME) | TLBLO_VALID | TLBLO_DIRTY;
+
 	
-    Entry_HI = faultaddress & TLBHI_VPAGE;
+    // Load tlb
+    Entry_HI = (faultaddress & PAGE_FRAME) & TLBHI_VPAGE;
 	Entry_LO = as->pagetable[LV1_PT_Index][LV2_PT_Index];
 	int spl;
+    // disable interrupts
 	spl = splhigh();
 	tlb_random(Entry_HI, Entry_LO);
 	splx(spl);
